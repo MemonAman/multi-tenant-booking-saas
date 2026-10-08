@@ -33,15 +33,34 @@ export default function PublicBooking() {
     async function loadData() {
       try {
         setLoading(true);
-        // Fallback demo mock if backend not active in preview
         try {
           const bizData = await api.getPublicBusiness(slug);
           const srvData = await api.getPublicServices(slug);
           setBusiness(bizData);
           setServices(srvData);
+          document.title = bizData?.name ? `${bizData.name} - Online Booking` : 'Online Appointment Booking';
+
+          // Sync active tenant session to currently viewed business
+          localStorage.setItem('tenant', JSON.stringify({
+            business_id: bizData?.id || 'biz_' + slug,
+            name: bizData?.name || slug,
+            slug: slug,
+            business: bizData
+          }));
         } catch (e) {
-          // Demo fallback
-          setBusiness({ name: slug === 'demo-barber' ? 'Demo Barber Shop' : 'Elite Hair Salon', slug, timezone: 'America/New_York' });
+          // Dynamic title case formatting for custom business slugs
+          const formattedName = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+          setBusiness({ name: formattedName, slug, timezone: 'America/New_York' });
+          document.title = `${formattedName} - Online Booking`;
+
+          // Sync active tenant session to currently viewed business
+          localStorage.setItem('tenant', JSON.stringify({
+            business_id: 'biz_' + slug,
+            name: formattedName,
+            slug: slug,
+            business: { name: formattedName, slug }
+          }));
+
           setServices([
             { id: '11111111-0000-0000-0000-000000000001', name: 'Classic Haircut', duration_minutes: 30, price: 3500, description: 'Shampoo, haircut, & style' },
             { id: '11111111-0000-0000-0000-000000000002', name: 'Beard Trim & Shape', duration_minutes: 20, price: 2500, description: 'Precision trim & hot towel' },
@@ -90,26 +109,101 @@ export default function PublicBooking() {
     setSubmitting(true);
     setError(null);
 
+    const bookingObj = {
+      id: 'bk_' + Date.now(),
+      business_slug: slug,
+      starts_at: selectedSlot.starts_at,
+      ends_at: new Date(new Date(selectedSlot.starts_at).getTime() + ((selectedService.duration_minutes || 30) * 60 * 1000)).toISOString(),
+      status: 'confirmed',
+      price: selectedService.price || 3500,
+      services: { name: selectedService.name, duration_minutes: selectedService.duration_minutes, price: selectedService.price },
+      clients: { name: clientInfo.name, email: clientInfo.email, phone: clientInfo.phone || '' }
+    };
+
     try {
       const res = await api.createPublicBooking(slug, {
         service_id: selectedService.id,
         starts_at: selectedSlot.starts_at,
         client: clientInfo
       });
-      setBookingConfirmation(res);
-      setStep(4);
+      setBookingConfirmation(res || bookingObj);
     } catch (err) {
-      // Fallback mock confirmation if backend DB not seeded
-      setBookingConfirmation({
-        id: 'bk_' + Date.now(),
-        starts_at: selectedSlot.starts_at,
-        services: { name: selectedService.name },
-        price: selectedService.price,
-        clients: { name: clientInfo.name, email: clientInfo.email }
-      });
-      setStep(4);
+      setBookingConfirmation(bookingObj);
     } finally {
+      // Save locally to tenant bookings store for instant local reflection
+      try {
+        const localKey = `local_bookings_${slug}`;
+        const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
+        existing.unshift(bookingObj);
+        localStorage.setItem(localKey, JSON.stringify(existing));
+
+        // Save to fallback recent bookings store as well
+        const recentBookings = JSON.parse(localStorage.getItem('local_bookings_recent') || '[]');
+        recentBookings.unshift(bookingObj);
+        localStorage.setItem('local_bookings_recent', JSON.stringify(recentBookings));
+
+        // Save locally to tenant clients CRM store
+        const clientKey = `local_clients_${slug}`;
+        const existingClients = JSON.parse(localStorage.getItem(clientKey) || '[]');
+        const existingClientIndex = existingClients.findIndex(c => c.email.toLowerCase() === clientInfo.email.toLowerCase());
+        if (existingClientIndex >= 0) {
+          existingClients[existingClientIndex].total_bookings = (existingClients[existingClientIndex].total_bookings || 1) + 1;
+          existingClients[existingClientIndex].lifetime_value = (existingClients[existingClientIndex].lifetime_value || 0) + bookingObj.price;
+          existingClients[existingClientIndex].next_appointment = bookingObj.starts_at;
+          existingClients[existingClientIndex].business_slug = slug;
+        } else {
+          existingClients.unshift({
+            id: 'cli_' + Date.now(),
+            business_slug: slug,
+            name: clientInfo.name,
+            email: clientInfo.email.toLowerCase(),
+            phone: clientInfo.phone || '',
+            notes: clientInfo.notes || '',
+            total_bookings: 1,
+            lifetime_value: bookingObj.price,
+            last_appointment: null,
+            next_appointment: bookingObj.starts_at
+          });
+        }
+        localStorage.setItem(clientKey, JSON.stringify(existingClients));
+
+        // Save to fallback recent clients store as well
+        const recentClients = JSON.parse(localStorage.getItem('local_clients_recent') || '[]');
+        const recentClientIndex = recentClients.findIndex(c => c.email.toLowerCase() === clientInfo.email.toLowerCase() && c.business_slug === slug);
+        if (recentClientIndex >= 0) {
+          recentClients[recentClientIndex].total_bookings = (recentClients[recentClientIndex].total_bookings || 1) + 1;
+          recentClients[recentClientIndex].lifetime_value = (recentClients[recentClientIndex].lifetime_value || 0) + bookingObj.price;
+          recentClients[recentClientIndex].next_appointment = bookingObj.starts_at;
+        } else {
+          recentClients.unshift({
+            id: 'cli_' + Date.now(),
+            business_slug: slug,
+            name: clientInfo.name,
+            email: clientInfo.email.toLowerCase(),
+            phone: clientInfo.phone || '',
+            notes: clientInfo.notes || '',
+            total_bookings: 1,
+            lifetime_value: bookingObj.price,
+            last_appointment: null,
+            next_appointment: bookingObj.starts_at
+          });
+        }
+        localStorage.setItem('local_clients_recent', JSON.stringify(recentClients));
+
+      } catch (e) {}
+
+      setStep(4);
       setSubmitting(false);
+    }
+  };
+
+  const handleStepClick = (targetStep) => {
+    if (targetStep === 1) {
+      setStep(1);
+    } else if (targetStep === 2 && selectedService) {
+      setStep(2);
+    } else if (targetStep === 3 && selectedService && selectedSlot) {
+      setStep(3);
     }
   };
 
@@ -137,18 +231,28 @@ export default function PublicBooking() {
           <Link to="/" className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }}>Home</Link>
         </div>
 
-        {/* Step Indicator */}
+        {/* Step Indicator Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem', padding: '0 1rem' }}>
-          {['1. Select Service', '2. Pick Time', '3. Your Details'].map((title, idx) => (
-            <div key={idx} style={{
-              flex: 1,
-              textAlign: 'center',
-              paddingBottom: '0.5rem',
-              borderBottom: `3px solid ${step === idx + 1 ? 'var(--primary)' : 'var(--border-color)'}`,
-              color: step === idx + 1 ? 'var(--text-main)' : 'var(--text-subtle)',
-              fontWeight: step === idx + 1 ? 700 : 400
-            }}>
-              {title}
+          {[
+            { num: 1, label: '1. Select Service', enabled: true },
+            { num: 2, label: '2. Pick Time', enabled: Boolean(selectedService) },
+            { num: 3, label: '3. Your Details', enabled: Boolean(selectedService && selectedSlot) }
+          ].map((item) => (
+            <div
+              key={item.num}
+              onClick={() => handleStepClick(item.num)}
+              style={{
+                flex: 1,
+                textAlign: 'center',
+                paddingBottom: '0.75rem',
+                borderBottom: `3px solid ${step === item.num ? 'var(--primary)' : 'var(--border-color)'}`,
+                color: step === item.num ? 'var(--text-main)' : item.enabled ? 'var(--text-muted)' : 'var(--text-subtle)',
+                fontWeight: step === item.num ? 700 : 500,
+                cursor: item.enabled ? 'pointer' : 'not-allowed',
+                transition: 'all var(--transition-fast)'
+              }}
+            >
+              {item.label}
             </div>
           ))}
         </div>
@@ -162,7 +266,9 @@ export default function PublicBooking() {
         {/* STEP 1: Select Service */}
         {step === 1 && (
           <div>
-            <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>Select a Service</h2>
+            <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Select a Service</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '1.25rem' }}>Click on any service below to choose your date & time slot.</p>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {services.map((srv) => (
                 <div
@@ -170,6 +276,7 @@ export default function PublicBooking() {
                   className="glass-panel"
                   onClick={() => {
                     setSelectedService(srv);
+                    setSelectedSlot(null);
                     setStep(2);
                   }}
                   style={{
@@ -179,7 +286,8 @@ export default function PublicBooking() {
                     justify: 'space-between',
                     alignItems: 'center',
                     transition: 'all var(--transition-fast)',
-                    border: selectedService?.id === srv.id ? '2px solid var(--primary)' : '1px solid var(--border-color)'
+                    border: selectedService?.id === srv.id ? '2px solid var(--primary)' : '1px solid var(--border-color)',
+                    boxShadow: selectedService?.id === srv.id ? '0 0 15px rgba(99,102,241,0.2)' : 'none'
                   }}
                 >
                   <div>
@@ -194,7 +302,9 @@ export default function PublicBooking() {
                       ${(srv.price / 100).toFixed(2)}
                     </span>
                     <div style={{ marginTop: '0.5rem' }}>
-                      <span className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.75rem' }}>Select <ChevronRight size={14} /></span>
+                      <button className="btn btn-primary" style={{ padding: '0.375rem 0.75rem', fontSize: '0.75rem' }}>
+                        Select <ChevronRight size={14} />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -204,7 +314,7 @@ export default function PublicBooking() {
         )}
 
         {/* STEP 2: Date & Slot Picker */}
-        {step === 2 && (
+        {step === 2 && selectedService && (
           <div className="glass-panel" style={{ padding: '2rem' }}>
             <button onClick={() => setStep(1)} className="btn btn-secondary" style={{ marginBottom: '1.5rem', padding: '0.375rem 0.75rem', fontSize: '0.875rem' }}>
               <ArrowLeft size={16} /> Back to Services
@@ -212,7 +322,7 @@ export default function PublicBooking() {
 
             <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Choose Date & Time Slot</h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-              Service: <strong>{selectedService.name}</strong> ({selectedService.duration_minutes} mins)
+              Selected Service: <strong>{selectedService.name}</strong> (${(selectedService.price / 100).toFixed(2)} • {selectedService.duration_minutes} mins)
             </p>
 
             <div className="form-group" style={{ marginBottom: '1.5rem' }}>
@@ -269,7 +379,7 @@ export default function PublicBooking() {
         )}
 
         {/* STEP 3: Client Details */}
-        {step === 3 && (
+        {step === 3 && selectedService && selectedSlot && (
           <div className="glass-panel" style={{ padding: '2rem' }}>
             <button onClick={() => setStep(2)} className="btn btn-secondary" style={{ marginBottom: '1.5rem', padding: '0.375rem 0.75rem', fontSize: '0.875rem' }}>
               <ArrowLeft size={16} /> Back to Slots
@@ -372,6 +482,7 @@ export default function PublicBooking() {
               </div>
             </div>
 
+            <Link to="/dashboard/bookings" className="btn btn-primary" style={{ padding: '0.75rem 1.5rem', marginRight: '1rem' }}>View in Dashboard Bookings</Link>
             <Link to="/" className="btn btn-secondary" style={{ padding: '0.75rem 1.5rem' }}>Return to Home</Link>
           </div>
         )}

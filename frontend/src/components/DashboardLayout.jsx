@@ -1,11 +1,23 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Calendar, LayoutDashboard, Users, Scissors, Settings, CreditCard, LogOut, ExternalLink, Bell } from 'lucide-react';
+import { Calendar, LayoutDashboard, Users, Scissors, Settings, CreditCard, LogOut, ExternalLink, Bell, Home } from 'lucide-react';
 import { api } from '../services/api';
 
 export default function DashboardLayout({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Resolve dynamic business tenant from localStorage
+  const tenantRaw = localStorage.getItem('tenant');
+  let tenant = null;
+  try {
+    tenant = tenantRaw ? JSON.parse(tenantRaw) : null;
+  } catch (e) {
+    tenant = null;
+  }
+
+  const businessName = tenant?.business?.name || tenant?.name || 'Demo Barber Shop';
+  const businessSlug = tenant?.business?.slug || tenant?.slug || 'demo-barber';
 
   const navItems = [
     { path: '/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -18,6 +30,8 @@ export default function DashboardLayout({ children }) {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('tenant');
+    localStorage.removeItem('user');
     navigate('/login');
   };
 
@@ -34,15 +48,15 @@ export default function DashboardLayout({ children }) {
     <div style={{ minHeight: '100vh', display: 'flex', background: 'var(--bg-dark)' }}>
       {/* Sidebar */}
       <aside style={{ width: '260px', borderRight: '1px solid var(--border-color)', background: 'var(--bg-card)', padding: '1.5rem', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2.5rem' }}>
+        <Link to="/" style={{ textDecoration: 'none', color: 'inherit', display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2.5rem' }}>
           <div style={{ background: 'linear-gradient(135deg, #6366f1, #06b6d4)', width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Calendar size={18} color="#fff" />
           </div>
           <div>
             <div style={{ fontSize: '1.125rem', fontWeight: 800 }}>BookFlow</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>Demo Barber Shop</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)', fontWeight: 600 }}>{businessName}</div>
           </div>
-        </div>
+        </Link>
 
         <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {navItems.map((item) => {
@@ -74,7 +88,7 @@ export default function DashboardLayout({ children }) {
         </nav>
 
         <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <Link to="/booking/demo-barber" target="_blank" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.875rem' }}>
+          <Link to={`/booking/${businessSlug}`} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.875rem' }}>
             <ExternalLink size={16} /> Public Booking URL
           </Link>
           <button onClick={handleTriggerReminders} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'flex-start', fontSize: '0.875rem', color: 'var(--accent-amber)' }}>

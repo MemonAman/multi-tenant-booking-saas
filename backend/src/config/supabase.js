@@ -5,20 +5,31 @@ if (!env.supabase.url || !env.supabase.anonKey) {
   console.warn('⚠️ Supabase credentials missing from environment variables.');
 }
 
+const activeKey = (env.supabase.anonKey && env.supabase.anonKey.startsWith('eyJ'))
+  ? env.supabase.anonKey
+  : (env.supabase.serviceRoleKey || env.supabase.anonKey || 'placeholder-key');
+
+const adminKey = env.supabase.serviceRoleKey || activeKey;
+
 // Public / Anon client (respects RLS)
 const supabaseAnon = createClient(
   env.supabase.url || 'https://placeholder-url.supabase.co',
-  env.supabase.anonKey || 'placeholder-anon-key'
+  activeKey
 );
 
 // Admin / Service Role client (bypasses RLS for system operations, server-side only)
 const supabaseAdmin = createClient(
   env.supabase.url || 'https://placeholder-url.supabase.co',
-  env.supabase.serviceRoleKey || env.supabase.anonKey || 'placeholder-service-key',
+  adminKey,
   {
     auth: {
       autoRefreshToken: false,
       persistSession: false
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${adminKey}`
+      }
     }
   }
 );
@@ -30,7 +41,7 @@ const supabaseAdmin = createClient(
 function createScopedClient(accessToken) {
   return createClient(
     env.supabase.url,
-    env.supabase.anonKey,
+    activeKey,
     {
       global: {
         headers: {

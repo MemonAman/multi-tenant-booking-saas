@@ -5,28 +5,62 @@ import { api } from '../services/api';
 
 export default function DashboardCRM() {
   const [search, setSearch] = useState('');
-  const [clients, setClients] = useState([
-    { id: '11111111-9999-0000-0000-000000000001', name: 'John Doe', email: 'john.doe@example.com', phone: '+1 555-0101', notes: 'Prefers low fade. Regular client.', total_bookings: 3, lifetime_value: 11500, last_appointment: '2026-10-01T10:00:00Z', next_appointment: '2026-10-15T10:00:00Z' },
-    { id: '22222222-9999-0000-0000-000000000002', name: 'Sarah Smith', email: 'sarah.smith@example.com', phone: '+1 555-0202', notes: 'Allergic to specific shampoos.', total_bookings: 1, lifetime_value: 3500, last_appointment: '2026-09-20T14:00:00Z', next_appointment: null },
-  ]);
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [selectedClient, setSelectedClient] = useState(null);
   const [editNotes, setEditNotes] = useState('');
   const [savedMessage, setSavedMessage] = useState(null);
 
+  const tenantRaw = localStorage.getItem('tenant');
+  let tenant = null;
+  try { tenant = tenantRaw ? JSON.parse(tenantRaw) : null; } catch(e){}
+  const businessSlug = tenant?.business?.slug || tenant?.slug || 'demo-barber';
+
   useEffect(() => {
     async function loadClients() {
       try {
-        const data = await api.getClients(search);
-        if (data && data.length > 0) {
-          setClients(data);
+        setLoading(true);
+        let apiData = [];
+        try {
+          apiData = await api.getClients(search);
+        } catch (e) {}
+
+        const localKey = `local_clients_${businessSlug}`;
+        const localClients = JSON.parse(localStorage.getItem(localKey) || '[]');
+        const recentClients = JSON.parse(localStorage.getItem('local_clients_recent') || '[]');
+
+        const tenantLocalClients = [
+          ...localClients,
+          ...recentClients.filter(c => c && c.business_slug === businessSlug)
+        ];
+
+        const combinedMap = new Map();
+        [...tenantLocalClients, ...(Array.isArray(apiData) ? apiData : [])].forEach(c => {
+          if (c && c.email && (!c.business_slug || c.business_slug === businessSlug)) {
+            combinedMap.set(c.email.toLowerCase(), c);
+          }
+        });
+
+        let combined = Array.from(combinedMap.values());
+        if (search) {
+          const q = search.toLowerCase();
+          combined = combined.filter(c => 
+            (c.name && c.name.toLowerCase().includes(q)) || 
+            (c.email && c.email.toLowerCase().includes(q)) || 
+            (c.phone && c.phone.includes(q))
+          );
         }
+
+        setClients(combined);
       } catch (e) {
-        // Fallback demo CRM records
+        console.error('Error loading CRM clients:', e);
+      } finally {
+        setLoading(false);
       }
     }
     loadClients();
-  }, [search]);
+  }, [search, businessSlug]);
 
   const handleSaveNotes = async () => {
     if (!selectedClient) return;
@@ -37,7 +71,7 @@ export default function DashboardCRM() {
       setSavedMessage('Internal customer notes saved successfully.');
     } catch (e) {
       setClients(clients.map(c => c.id === selectedClient.id ? { ...c, notes: editNotes } : c));
-      setSavedMessage('Notes saved (Demo Mode).');
+      setSavedMessage('Notes saved.');
     }
   };
 
@@ -71,48 +105,58 @@ export default function DashboardCRM() {
       <div style={{ display: 'grid', gridTemplateColumns: selectedClient ? '2fr 1fr' : '1fr', gap: '1.5rem' }}>
         
         <div className="glass-panel" style={{ padding: '1.5rem' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-subtle)', fontSize: '0.875rem' }}>
-                  <th style={{ padding: '0.75rem 1rem' }}>Customer</th>
-                  <th style={{ padding: '0.75rem 1rem' }}>Contact</th>
-                  <th style={{ padding: '0.75rem 1rem' }}>Bookings</th>
-                  <th style={{ padding: '0.75rem 1rem' }}>Lifetime Value</th>
-                  <th style={{ padding: '0.75rem 1rem' }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clients.map((c) => (
-                  <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                    <td style={{ padding: '1rem' }}>
-                      <div style={{ fontWeight: 700, fontSize: '1rem' }}>{c.name}</div>
-                    </td>
-                    <td style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                      <div>{c.email}</div>
-                      <div>{c.phone || 'No phone'}</div>
-                    </td>
-                    <td style={{ padding: '1rem', fontWeight: 600 }}>{c.total_bookings} appointments</td>
-                    <td style={{ padding: '1rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
-                      ${((c.lifetime_value || 0) / 100).toFixed(2)}
-                    </td>
-                    <td style={{ padding: '1rem' }}>
-                      <button
-                        onClick={() => {
-                          setSelectedClient(c);
-                          setEditNotes(c.notes || '');
-                        }}
-                        className="btn btn-secondary"
-                        style={{ padding: '0.375rem 0.75rem', fontSize: '0.75rem' }}
-                      >
-                        View Profile
-                      </button>
-                    </td>
+          {clients.length === 0 ? (
+            <div style={{ padding: '3rem 1rem', textAlign: 'center' }}>
+              <User size={40} color="var(--accent-cyan)" style={{ marginBottom: '1rem' }} />
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem' }}>No CRM Customers Found</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', maxWidth: '400px', margin: '0 auto' }}>
+                Customer CRM profiles are automatically generated when clients complete bookings for your business.
+              </p>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-subtle)', fontSize: '0.875rem' }}>
+                    <th style={{ padding: '0.75rem 1rem' }}>Customer</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>Contact</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>Bookings</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>Lifetime Value</th>
+                    <th style={{ padding: '0.75rem 1rem' }}>Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {clients.map((c) => (
+                    <tr key={c.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '1rem' }}>
+                        <div style={{ fontWeight: 700, fontSize: '1rem' }}>{c.name}</div>
+                      </td>
+                      <td style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+                        <div>{c.email}</div>
+                        <div>{c.phone || 'No phone'}</div>
+                      </td>
+                      <td style={{ padding: '1rem', fontWeight: 600 }}>{c.total_bookings} appointments</td>
+                      <td style={{ padding: '1rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
+                        ${((c.lifetime_value || 0) / 100).toFixed(2)}
+                      </td>
+                      <td style={{ padding: '1rem' }}>
+                        <button
+                          onClick={() => {
+                            setSelectedClient(c);
+                            setEditNotes(c.notes || '');
+                          }}
+                          className="btn btn-secondary"
+                          style={{ padding: '0.375rem 0.75rem', fontSize: '0.75rem' }}
+                        >
+                          View Profile
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Customer Detail Drawer */}

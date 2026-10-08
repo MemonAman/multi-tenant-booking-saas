@@ -1,56 +1,97 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../components/DashboardLayout';
-import { Calendar, DollarSign, Users, Activity, Clock, CheckCircle, ArrowUpRight } from 'lucide-react';
+import { Calendar, DollarSign, Users, Activity, Clock, CheckCircle, ArrowUpRight, Plus, ExternalLink } from 'lucide-react';
 import { api } from '../services/api';
 import { Link } from 'react-router-dom';
 
 export default function DashboardOverview() {
   const [metrics, setMetrics] = useState({
-    todayCount: 4,
-    upcomingCount: 8,
-    totalRevenue: 34500, // $345.00
-    clientCount: 12
+    todayCount: 0,
+    upcomingCount: 0,
+    totalRevenue: 0,
+    clientCount: 0
   });
 
-  const [recentBookings, setRecentBookings] = useState([
-    { id: '1', starts_at: new Date().toISOString(), services: { name: 'Classic Haircut' }, clients: { name: 'John Doe', email: 'john@example.com' }, price: 3500, status: 'confirmed' },
-    { id: '2', starts_at: new Date(Date.now() + 3600000).toISOString(), services: { name: 'Beard Trim & Shape' }, clients: { name: 'Sarah Smith', email: 'sarah@example.com' }, price: 2500, status: 'pending' },
-    { id: '3', starts_at: new Date(Date.now() + 7200000).toISOString(), services: { name: 'Deluxe Combo' }, clients: { name: 'Michael Brown', email: 'michael@example.com' }, price: 5500, status: 'completed' },
-  ]);
+  const [recentBookings, setRecentBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Resolve business slug for public link button & local storage keys
+  const tenantRaw = localStorage.getItem('tenant');
+  let tenant = null;
+  try { tenant = tenantRaw ? JSON.parse(tenantRaw) : null; } catch(e){}
+  const businessSlug = tenant?.business?.slug || tenant?.slug || 'demo-barber';
 
   useEffect(() => {
     async function loadMetrics() {
       try {
-        const bookings = await api.getBookings();
-        const clients = await api.getClients();
-        
+        setLoading(true);
+        let apiBookings = [];
+        let apiClients = [];
+
+        try { apiBookings = await api.getBookings(); } catch(e) {}
+        try { apiClients = await api.getClients(); } catch(e) {}
+
+        // Load local bookings & clients for tenant slug
+        const localBookingsKey = `local_bookings_${businessSlug}`;
+        const localClientsKey = `local_clients_${businessSlug}`;
+
+        const localBookings = JSON.parse(localStorage.getItem(localBookingsKey) || '[]');
+        const recentBookings = JSON.parse(localStorage.getItem('local_bookings_recent') || '[]');
+        const localClients = JSON.parse(localStorage.getItem(localClientsKey) || '[]');
+        const recentClients = JSON.parse(localStorage.getItem('local_clients_recent') || '[]');
+
+        // Filter strictly by tenant businessSlug to prevent cross-tenant leakage
+        const tenantLocalBookings = [
+          ...localBookings,
+          ...recentBookings.filter(b => b && b.business_slug === businessSlug)
+        ];
+
+        const tenantLocalClients = [
+          ...localClients,
+          ...recentClients.filter(c => c && c.business_slug === businessSlug)
+        ];
+
+        // Merge API & local bookings (unique by id)
+        const combinedMap = new Map();
+        [...tenantLocalBookings, ...(Array.isArray(apiBookings) ? apiBookings : [])].forEach(b => {
+          if (b && b.id && (!b.business_slug || b.business_slug === businessSlug)) {
+            combinedMap.set(b.id, b);
+          }
+        });
+        const combinedBookings = Array.from(combinedMap.values());
+
         const todayStr = new Date().toISOString().split('T')[0];
-        const today = bookings.filter(b => b.starts_at && b.starts_at.startsWith(todayStr));
-        const upcoming = bookings.filter(b => new Date(b.starts_at) >= new Date() && b.status !== 'cancelled');
-        const totalRev = bookings.reduce((sum, b) => sum + (b.price || 0), 0);
+        const today = combinedBookings.filter(b => b.starts_at && b.starts_at.startsWith(todayStr));
+        const upcoming = combinedBookings.filter(b => new Date(b.starts_at) >= new Date() && b.status !== 'cancelled');
+        const totalRev = combinedBookings.reduce((sum, b) => sum + (b.price || 0), 0);
 
         setMetrics({
-          todayCount: today.length || 4,
-          upcomingCount: upcoming.length || 8,
-          totalRevenue: totalRev || 34500,
-          clientCount: clients.length || 12
+          todayCount: today.length,
+          upcomingCount: upcoming.length,
+          totalRevenue: totalRev,
+          clientCount: Math.max(combinedBookings.length > 0 ? new Set(combinedBookings.map(b => b.clients?.email)).size : 0, tenantLocalClients.length, Array.isArray(apiClients) ? apiClients.length : 0)
         });
 
-        if (bookings.length > 0) {
-          setRecentBookings(bookings.slice(0, 5));
-        }
+        setRecentBookings(combinedBookings.slice(0, 5));
       } catch (e) {
-        // Fallback to initial mock metrics for demo display
+        console.error('Error loading overview metrics:', e);
+      } finally {
+        setLoading(false);
       }
     }
     loadMetrics();
-  }, []);
+  }, [businessSlug]);
 
   return (
     <DashboardLayout>
-      <div style={{ marginBottom: '2rem' }}>
-        <h1 style={{ fontSize: '1.75rem', fontWeight: 800 }}>Business Overview</h1>
-        <p style={{ color: 'var(--text-muted)' }}>Welcome back! Here is your business activity and appointment summary.</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+        <div>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 800 }}>Business Overview</h1>
+          <p style={{ color: 'var(--text-muted)' }}>Welcome back! Here is your business activity and appointment summary.</p>
+        </div>
+        <Link to={`/booking/${businessSlug}`} className="btn btn-primary">
+          <ExternalLink size={16} /> View Public Booking Page
+        </Link>
       </div>
 
       {/* Metric Cards Grid */}
@@ -114,41 +155,54 @@ export default function DashboardOverview() {
           </Link>
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-subtle)', fontSize: '0.875rem' }}>
-                <th style={{ padding: '0.75rem 1rem' }}>Client</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Service</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Date & Time</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Price</th>
-                <th style={{ padding: '0.75rem 1rem' }}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentBookings.map((b) => (
-                <tr key={b.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                  <td style={{ padding: '1rem' }}>
-                    <div style={{ fontWeight: 600 }}>{b.clients?.name || 'Client'}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-subtle)' }}>{b.clients?.email}</div>
-                  </td>
-                  <td style={{ padding: '1rem' }}>{b.services?.name}</td>
-                  <td style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                    {new Date(b.starts_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                  </td>
-                  <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--accent-emerald)' }}>
-                    ${((b.price || 0) / 100).toFixed(2)}
-                  </td>
-                  <td style={{ padding: '1rem' }}>
-                    <span className={`badge badge-${b.status}`}>
-                      {b.status}
-                    </span>
-                  </td>
+        {recentBookings.length === 0 ? (
+          <div style={{ padding: '3rem 1rem', textAlign: 'center', background: 'var(--bg-input)', borderRadius: 'var(--radius-md)' }}>
+            <Calendar size={40} color="var(--accent-cyan)" style={{ marginBottom: '1rem' }} />
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem' }}>No Bookings Yet</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', maxWidth: '400px', margin: '0 auto 1.5rem' }}>
+              Share your public booking page link with customers to start accepting appointments online!
+            </p>
+            <Link to={`/booking/${businessSlug}`} className="btn btn-primary" style={{ fontSize: '0.875rem' }}>
+              Open Public Booking Page <ExternalLink size={16} />
+            </Link>
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-subtle)', fontSize: '0.875rem' }}>
+                  <th style={{ padding: '0.75rem 1rem' }}>Client</th>
+                  <th style={{ padding: '0.75rem 1rem' }}>Service</th>
+                  <th style={{ padding: '0.75rem 1rem' }}>Date & Time</th>
+                  <th style={{ padding: '0.75rem 1rem' }}>Price</th>
+                  <th style={{ padding: '0.75rem 1rem' }}>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {recentBookings.map((b) => (
+                  <tr key={b.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={{ padding: '1rem' }}>
+                      <div style={{ fontWeight: 600 }}>{b.clients?.name || 'Client'}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-subtle)' }}>{b.clients?.email}</div>
+                    </td>
+                    <td style={{ padding: '1rem' }}>{b.services?.name}</td>
+                    <td style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+                      {new Date(b.starts_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                    </td>
+                    <td style={{ padding: '1rem', fontWeight: 700, color: 'var(--accent-emerald)' }}>
+                      ${((b.price || 0) / 100).toFixed(2)}
+                    </td>
+                    <td style={{ padding: '1rem' }}>
+                      <span className={`badge badge-${b.status}`}>
+                        {b.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

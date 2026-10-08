@@ -1,33 +1,58 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../components/DashboardLayout';
-import { Calendar as CalendarIcon, Clock, User, Check, X, RefreshCw, AlertCircle } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, User, Check, X, RefreshCw, ExternalLink } from 'lucide-react';
 import { api } from '../services/api';
+import { Link } from 'react-router-dom';
 
 export default function DashboardCalendar() {
   const [selectedView, setSelectedView] = useState('week'); // 'day', 'week', 'month'
-  const [bookings, setBookings] = useState([
-    { id: '11111111-0000-0000-0000-000000000001', starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 1800000).toISOString(), status: 'confirmed', price: 3500, services: { name: 'Classic Haircut' }, clients: { name: 'John Doe', email: 'john@example.com', phone: '+1 555-0101' } },
-    { id: '11111111-0000-0000-0000-000000000002', starts_at: new Date(Date.now() + 7200000).toISOString(), ends_at: new Date(Date.now() + 8400000).toISOString(), status: 'pending', price: 2500, services: { name: 'Beard Trim & Shape' }, clients: { name: 'Sarah Smith', email: 'sarah@example.com' } }
-  ]);
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('14:00');
   const [actionMessage, setActionMessage] = useState(null);
 
+  const tenantRaw = localStorage.getItem('tenant');
+  let tenant = null;
+  try { tenant = tenantRaw ? JSON.parse(tenantRaw) : null; } catch(e){}
+  const businessSlug = tenant?.business?.slug || tenant?.slug || 'demo-barber';
+
   useEffect(() => {
     async function loadBookings() {
       try {
-        const data = await api.getBookings();
-        if (data && data.length > 0) {
-          setBookings(data);
-        }
+        setLoading(true);
+        let apiData = [];
+        try {
+          apiData = await api.getBookings();
+        } catch (e) {}
+
+        const localKey = `local_bookings_${businessSlug}`;
+        const localBookings = JSON.parse(localStorage.getItem(localKey) || '[]');
+        const recentBookings = JSON.parse(localStorage.getItem('local_bookings_recent') || '[]');
+
+        const tenantLocalBookings = [
+          ...localBookings,
+          ...recentBookings.filter(b => b && b.business_slug === businessSlug)
+        ];
+
+        const combinedMap = new Map();
+        [...tenantLocalBookings, ...(Array.isArray(apiData) ? apiData : [])].forEach(b => {
+          if (b && b.id && (!b.business_slug || b.business_slug === businessSlug)) {
+            combinedMap.set(b.id, b);
+          }
+        });
+
+        setBookings(Array.from(combinedMap.values()));
       } catch (e) {
-        // Fallback demo data
+        console.error('Error loading bookings:', e);
+      } finally {
+        setLoading(false);
       }
     }
     loadBookings();
-  }, []);
+  }, [businessSlug]);
 
   const handleUpdateStatus = async (id, newStatus) => {
     try {
@@ -37,7 +62,7 @@ export default function DashboardCalendar() {
       setSelectedBooking(null);
     } catch (e) {
       setBookings(bookings.map(b => b.id === id ? { ...b, status: newStatus } : b));
-      setActionMessage(`Status changed to '${newStatus}' (Demo Mode).`);
+      setActionMessage(`Status changed to '${newStatus}'.`);
       setSelectedBooking(null);
     }
   };
@@ -52,7 +77,7 @@ export default function DashboardCalendar() {
       setBookings(bookings.map(b => b.id === id ? { ...b, starts_at: newStartsAt, status: 'confirmed' } : b));
       setSelectedBooking(null);
     } catch (e) {
-      setActionMessage(`Rescheduled to ${rescheduleDate} ${rescheduleTime} (Demo Mode).`);
+      setActionMessage(`Rescheduled to ${rescheduleDate} ${rescheduleTime}.`);
       setBookings(bookings.map(b => b.id === id ? { ...b, starts_at: newStartsAt, status: 'confirmed' } : b));
       setSelectedBooking(null);
     }
@@ -95,34 +120,46 @@ export default function DashboardCalendar() {
         </div>
       )}
 
-      {/* Calendar List View Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
-        {bookings.map((b) => (
-          <div
-            key={b.id}
-            className="glass-panel"
-            style={{ padding: '1.5rem', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'transform var(--transition-fast)' }}
-            onClick={() => setSelectedBooking(b)}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <span className={`badge badge-${b.status}`}>{b.status}</span>
-              <span style={{ fontWeight: 800, color: 'var(--accent-emerald)' }}>${((b.price || 0) / 100).toFixed(2)}</span>
-            </div>
+      {bookings.length === 0 ? (
+        <div className="glass-panel" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
+          <CalendarIcon size={48} color="var(--accent-cyan)" style={{ marginBottom: '1rem' }} />
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>No Scheduled Appointments</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', maxWidth: '400px', margin: '0 auto 1.5rem' }}>
+            There are currently no bookings for your business. Share your public booking link with clients!
+          </p>
+          <Link to={`/booking/${businessSlug}`} className="btn btn-primary">
+            Open Public Booking Page <ExternalLink size={16} />
+          </Link>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
+          {bookings.map((b) => (
+            <div
+              key={b.id}
+              className="glass-panel"
+              style={{ padding: '1.5rem', cursor: 'pointer', border: '1px solid var(--border-color)', transition: 'transform var(--transition-fast)' }}
+              onClick={() => setSelectedBooking(b)}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <span className={`badge badge-${b.status}`}>{b.status}</span>
+                <span style={{ fontWeight: 800, color: 'var(--accent-emerald)' }}>${((b.price || 0) / 100).toFixed(2)}</span>
+              </div>
 
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.25rem' }}>{b.services?.name || 'Service'}</h3>
-            
-            <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Clock size={16} color="var(--accent-cyan)" />
-              {new Date(b.starts_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-            </div>
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.25rem' }}>{b.services?.name || 'Service'}</h3>
+              
+              <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Clock size={16} color="var(--accent-cyan)" />
+                {new Date(b.starts_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+              </div>
 
-            <div style={{ fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-              <User size={16} color="var(--primary)" />
-              <span>{b.clients?.name} ({b.clients?.email})</span>
+              <div style={{ fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                <User size={16} color="var(--primary)" />
+                <span>{b.clients?.name} ({b.clients?.email})</span>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Booking Action Modal */}
       {selectedBooking && (

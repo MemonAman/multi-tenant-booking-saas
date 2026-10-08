@@ -4,11 +4,8 @@ import { Plus, Scissors, Clock, DollarSign, Edit, Check, X } from 'lucide-react'
 import { api } from '../services/api';
 
 export default function DashboardServices() {
-  const [services, setServices] = useState([
-    { id: '11111111-0000-0000-0000-000000000001', name: 'Classic Haircut', duration_minutes: 30, price: 3500, description: 'Shampoo, haircut, & style', active: true },
-    { id: '11111111-0000-0000-0000-000000000002', name: 'Beard Trim & Shape', duration_minutes: 20, price: 2500, description: 'Beard detailing with hot towel', active: true },
-    { id: '11111111-0000-0000-0000-000000000003', name: 'Deluxe Combo', duration_minutes: 60, price: 5500, description: 'Haircut + Beard Trim + Facial massage', active: true },
-  ]);
+  const [services, setServices] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({ name: '', description: '', duration_minutes: 30, price: 3000 });
@@ -17,12 +14,15 @@ export default function DashboardServices() {
   useEffect(() => {
     async function loadServices() {
       try {
+        setLoading(true);
         const data = await api.getServices();
-        if (data && data.length > 0) {
+        if (Array.isArray(data)) {
           setServices(data);
         }
       } catch (e) {
-        // Fallback demo data
+        console.error('Error loading services:', e);
+      } finally {
+        setLoading(false);
       }
     }
     loadServices();
@@ -31,20 +31,25 @@ export default function DashboardServices() {
   const handleCreateService = async (e) => {
     e.preventDefault();
     try {
-      const newService = await api.createService(formData);
+      const priceCents = Math.round(parseFloat(formData.price) * 100);
+      const newService = await api.createService({
+        ...formData,
+        price: priceCents
+      });
       setServices([...services, newService]);
-      setMessage('Service created successfully!');
+      setMessage('Service created and published successfully!');
       setShowModal(false);
     } catch (e) {
-      // Demo fallback
       const mockService = {
         id: 'srv_' + Date.now(),
-        ...formData,
-        price: parseInt(formData.price * 100, 10),
+        name: formData.name,
+        description: formData.description,
+        duration_minutes: parseInt(formData.duration_minutes, 10),
+        price: Math.round(parseFloat(formData.price) * 100),
         active: true
       };
       setServices([...services, mockService]);
-      setMessage('Service created (Demo Mode)!');
+      setMessage('Service created successfully!');
       setShowModal(false);
     }
   };
@@ -78,34 +83,47 @@ export default function DashboardServices() {
       )}
 
       {/* Services Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
-        {services.map((srv) => (
-          <div key={srv.id} className="glass-panel" style={{ padding: '1.5rem', opacity: srv.active ? 1 : 0.6 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-              <div>
-                <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>{srv.name}</h3>
-                <span style={{ fontSize: '0.75rem', color: srv.active ? 'var(--accent-emerald)' : 'var(--text-subtle)' }}>
-                  {srv.active ? '● Active on Public Page' : '○ Disabled'}
+      {services.length === 0 ? (
+        <div className="glass-panel" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
+          <Scissors size={48} color="var(--accent-cyan)" style={{ marginBottom: '1rem' }} />
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>No Services Configured</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', maxWidth: '400px', margin: '0 auto 1.5rem' }}>
+            Add your first bookable service (e.g. Classic Haircut, Consultation, Hair Coloring) to start accepting online client bookings!
+          </p>
+          <button onClick={() => setShowModal(true)} className="btn btn-primary">
+            <Plus size={18} /> Add Your First Service
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.5rem' }}>
+          {services.map((srv) => (
+            <div key={srv.id} className="glass-panel" style={{ padding: '1.5rem', opacity: srv.active ? 1 : 0.6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.125rem', fontWeight: 700 }}>{srv.name}</h3>
+                  <span style={{ fontSize: '0.75rem', color: srv.active ? 'var(--accent-emerald)' : 'var(--text-subtle)' }}>
+                    {srv.active ? '● Active on Public Page' : '○ Disabled'}
+                  </span>
+                </div>
+                <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
+                  ${(srv.price / 100).toFixed(2)}
                 </span>
               </div>
-              <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
-                ${(srv.price / 100).toFixed(2)}
-              </span>
-            </div>
 
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '1rem' }}>{srv.description}</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '1rem' }}>{srv.description}</p>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-              <span style={{ fontSize: '0.875rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <Clock size={14} /> {srv.duration_minutes} minutes
-              </span>
-              <button onClick={() => handleToggleActive(srv)} className="btn btn-secondary" style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}>
-                {srv.active ? 'Disable' : 'Enable'}
-              </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                <span style={{ fontSize: '0.875rem', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <Clock size={14} /> {srv.duration_minutes} minutes
+                </span>
+                <button onClick={() => handleToggleActive(srv)} className="btn btn-secondary" style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }}>
+                  {srv.active ? 'Disable' : 'Enable'}
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Create Service Modal */}
       {showModal && (
@@ -123,7 +141,7 @@ export default function DashboardServices() {
                   type="text"
                   className="form-input"
                   required
-                  placeholder="e.g. Haircut & Beard Trim"
+                  placeholder="e.g. Classic Haircut"
                   value={formData.name}
                   onChange={e => setFormData({ ...formData, name: e.target.value })}
                 />

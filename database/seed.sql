@@ -4,7 +4,7 @@
 -- =============================================================================
 
 -- Clean existing data (Optional / Development reset)
-TRUNCATE public.businesses CASCADE;
+-- TRUNCATE public.businesses CASCADE;
 
 -- Insert Business 1: Demo Barber Shop
 INSERT INTO public.businesses (id, owner_user_id, name, slug, timezone, phone, email, status)
